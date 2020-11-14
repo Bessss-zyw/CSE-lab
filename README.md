@@ -1,387 +1,450 @@
-# Lab 1: Basic File System
+# Lab-2: RPC and Lock Server
 
-**Hand out: Sep 15th**
+### Due: 10-25-2020 23:59 (UTC+8)
 
-**Deadline: Sep 30th 23:59 (GMT+8) No Extension**
+### General Lab Info can be found in Lab Information.
 
-## Get Ready
+# 
 
-In this lab, you will learn how to implement your own file system step by step. In **Part1**, you will implement an inode manager to support your file system. In **Part2**, you will start your file system implementation by getting some basic operations to work.
+## Introduction
 
-To do this lab, you'll need to use a computer that has the FUSE module, library, and headers installed. You should be able to install these on your own machine by following the instructions at [fuse.sourceforge.net](http://www.fuse.sourceforge.net/).
+- This lab includes three parts. In **Part1**(60 points) you will use RPC to implement a single client file server. In **Part2**(60 points), you will implememnt a lock server and add locking to ensure that concurrent operations to the same file/directory from different yfs_clients occur one at a time. In **Part3**(80 points), you will use lock cache to improve system performance.
 
-In the past, we will provide you a VM image running on VMware so you can directly use this VM image without any environment configuration. However, in this year, we decided to use Container(Docker) for all of your CSE Labs. Also, we will provide a Container Image including all the environments your need for these labs. If you are not familiar with Container(Docker), read the [docker tutorial](https://docs.docker.com/get-started/) first.
+- If you have questions about this lab, either in programming environment or requirement, please ask TA: Yao Zihang (zihang010509@gmail.com).
 
-## Getting Started
+## Getting started
 
-```
-    % mkdir lab-cse
-    % cd lab-cse
-    % git clone http://ipads.se.sjtu.edu.cn:1312/lab/cse-2020-fall.git lab1 -b lab1
-    % cd lab1
-    % git checkout lab1
-    % docker pull ddnirvana/cselab_env:latest
-       # suppose the absoulte path of lab-cse is /home/xx/lab-cse
-    % sudo docker run -it --privileged --cap-add=ALL -v /home/xx/lab-cse:/home/stu/devlop ddnirvana/cselab_env:latest /bin/bash
-       # now you will enter in a container environment, the codes you downloaded in lab-cse will apper in /home/stu/devlop in the container
-    %  cd /home/stu/devlop/lab1
-    %  make
-```
+- Please backup your solution to lab1 before starting the steps below
 
-**Notes:** Only files in the volume will be persistent, put all the files useful to the volume directory, in the above example: /home/stu/devlop directory.
+  - At first, please remember to save your lab1 solution:
 
-If you have questions about this lab, please ask TA: Xu Tianqiang.
+    ```
+    % cd lab-cse/lab1
+    % git commit -a -m “solution for lab1” 
+    ```
+
+    
+
+  - Then, pull from the repository:
+
+    ```
+    % git pull
+    remote: Counting objects: 43, done.
+    …
+    [new branch]      lab2      -> origin/lab2
+    Already up-to-date
+    ```
+
+    
+
+  - Then, change to lab2 branch:
+
+    ```
+    % git checkout lab2
+        
+    ```
+
+    
+
+  - Merge with lab1, and solve the conflict by yourself (mainly in fuse.cc and yfs_client.cc):
+
+    ```
+    % git merge lab1
+    Auto-merging fuse.cc
+    CONFLICT (content): Merge conflict in yfs_client.cc
+    Auto-merging yfs_client.cc
+    CONFLICT (content): Merge conflict in ifs_client.cc
+    Automatic merge failed; fix conflicts and then commit the result
+    ......
+    ```
+
+    
+
+  - After merge all of the conflicts, you should be able to compile successfully:
+
+    ```
+    % make
+    ```
+
+    
+
+  - Make sure there's no error in make.
+
+- Note: For Lab2 and beyond, you'll need to use a computer that has the FUSE module, library, and headers installed. You should be able to install these on your own machine by following the instructions at [FUSE: Filesystem in Userspace](http://fuse.sourceforge.net/) (see Lab Information)
+
+- Note: Both 32-bit and 64-bit librpc are provided, so the lab should be architecture independent.
+
+- Note: For this lab, you will not have to worry about server failures or client failures. You also need not be concerned about malicious or buggy applications.
+
+## Distributed FileSystem (Strawman's Approach)
+
+- In lab1, we have implemented a file system on a single machine. In this lab, we just extend the single machine fils system to a distributed file system.
+- Separating extent service from yfs logic brings us a lot of advantages, such as no fate sharing with yfs client, high availability.
+- Luckily, most of your job has been done in the previous lab. You now can use extent service provided by extent_server through RPC in extent_client. Then a strawman distributed file system has been finished.
+- *You had better test your code with the previous test suit before any progress.*
 
 ## Part 1
 
-In this part, you will firstly implement an inode manager to support your file system, where following APIs should work properly:
+- In lab 2, your aim is to extend it to a distributed file server. And in part 1, it now moves on to the RPC part.
 
-```
-CREATE, GETATTR
-PUT, GET
-REMOVE
-```
+  - ![img](https://ipads.se.sjtu.edu.cn/courses/cse/labs/lab2-imgs/lab2-layer.png)
 
-Before implementing your inode manger, let's have a glance at the YFS architecture:
+- In principle, you can implement whatever design you like as long as it satisfies the requirements in the "Your Job" section and passes the testers. In practice, you should follow the detailed guidance below.
 
-![img](https://ipads.se.sjtu.edu.cn/courses/cse/labs/lab1-pictures/part1.png)
+  - Using the RPC system:
 
-In part 1, you can completely ignore the fuse and yfs_client, but just concern about the parts framed by the red box: **extent_client**, **extent_server** and **inode_manager**.
+    - The RPC library. In this lab, you don't need to care about the implementation of RPC mechanisms, rather you'll use the RPC system to make your local filesystem become a distributed filesystem.
 
-Extent_client acts as a block provider just like a disk. It will communicate with extent_server using rpc (which you will implement in the future, just now it only uses direct and local function call).
+    - A server uses the RPC library by creating an RPC server object (rpcs) listening on a port and registering various RPC handlers (see `main()` function in demo_server.cc).
 
-The inode manager mimics the inode layer of alloc_inode, free_inode, read_file, write_file, remove_file, getattr, which support the five APIs (**CREATE/GETATTR/PUT/GET/REMOVE**) provided by extent_server.
+    - A client creates a RPC client object (rpcc), asks for it to be connected to the demo_server's address and port, and invokes RPC calls (see demo_client.cc).
 
-If there's no error in make, an executable file part1_tester will be generated, and after you type:
+    - You can learn how to use the RPC system by studying the stat call implementation.
 
-```
-% ./part1_tester
-```
+       
 
-you will get following output:
+      please note it's for illustration purpose only, you won't need to follow the implementation
 
-```
-========== begin test create and getattr ==========
-...
-[TEST_ERROR]: error ...
---------------------------------------------------
-Part1 score is : 0/100
-```
+      - use `make rpcdemo` to build the RPC demo
 
-If you see additional warnings/errors, it's most likely because you don't have some specific libraries installed. Usethe apt-file utility to look up the correct package that contains the file you need, if you are on debian-basedsystem.
+    - RPC handlers have a standard interface with one to six request arguments and a reply value implemented as a last reference argument. The handler also returns an integer status code; the convention is to return zero for success and to return positive numbers for various errors. If the RPC fails in the RPC library (e.g.timeouts), the RPC client gets a negative return value instead. The various reasons for RPC failures in the RPC library are defined in rpc.h under rpc_const.
 
-**Part 1** will be divided into 3 parts. Before you write any code, we **suggest** that you should read **inode_manager.h** first and be familiar with all the classes. We have already provide you some useful functions such as get_inode and put_inode.
+    - The RPC system marshalls objects into a stream of bytes to transmit over the network and unmarshalls them at the other end. Beware: the RPC library does not check that the data in an arriving message have the expected type(s). If a client sends one type and the server is expecting a different type, something bad will happen. You should check that the client's RPC call function sends types that are the same as those expected by the corresponding server handler function.
 
-In **part 1A**, you should implement disk::read_block, disk::write_block, inode_manager::alloc_inode and inode_manager::getattr, to support **CREATE** and **GETATTR** APIs. Your code should pass the **test_create_and_getattr()** in part1_tester, which tests creating empty files, getting their attributes like type.
+    - The RPC library provides marshall/unmarshall methods for standard C++ objects such asstd::string, int, and char. You should be able to complete this lab with existing marshall/unmarshall methods.
 
-In **part 1B**, you should implement inode_manager::write_file, inode_manager::read_file, block_manager::alloc_block, block_manager::free_block, to support **PUT** and **GET** APIs. Your code should pass the **test_put_and_get()** in part1_tester, which, write and read files.
+### Test
 
-In **part 1C**, you should implement inode_manager::remove_file and inode_manager::free_inode, to support **REMOVE** API. Your code should pass the **test_remove()** in part1_tester.
+- To grade this part of lab, a test script
 
-In part 1, you should only need to make changes to inode_manager.cc. (Although you are allowed to change many other files, except those directly used to implement tests.) Although maybe we won't check all the corner case, you should try your best to make your code **robust**. It will be good for the coming labs.
+   
 
-### Part 1A: CREATE/GETATTR
+  ```
+  grade.sh
+  ```
 
-Your job in Part 1A is to implement the read_block and write_block of disk and the alloc_inode and getattr of inode_manager, to support the **CREATE** and **GETATTR** APIs of extent_server. You may modify or add any files you like, except that you should not modify the part1_tester.cc. (Although our sample solution, for lab1-part-1, contains changes to inode_manager.cc only.)
+   
 
-The tips can be found on the codes of inode_manager.[h|cc]. Be aware that you should firstly scan through the code in inode_manager.h, where defines most of the variables, structures and macros you can use, as well as the functions get_inode and put_inode of inode_manager I leave to you to refer to.
+  is provided. Here's a successful grading.
 
-Meanwhile, pay attention to one of the comments in inode_manager.c:
-
-```
-// The layout of disk should be like this:
-// |<-sb->|<-free block bitmap->|<-inode table->|<-data->|
-```
-
-It may be helpful for you to understand most of the process of the data access. After you finish these 4 functions implementation, run:
-
-```
-% make
-% ./part1_tester
-```
-
-You should get following output:
-
-```
-========== begin test create and getattr ==========
-...
-...
-========== pass test create and getattr ==========
-========== begin test put and get ==========
-...
-...
-[TEST_ERROR] : error ...
---------------------------------------------------
-Part1 score is : 40/100
-```
-
-### Part 1B: PUT/GET
-
-Your job in Part 1B is to implement the write_file and read_file of inode_manager, and alloc_block and free_block of block_manager, to support the **PUT** and **GET** APIs of extent_server.
-
-You should pay attention to the indirect block test. In our inode manager, each file has only one additional level of indirect block, which means one file has 32 direct block and 1 indirect block which point to a block filled with other blocks id.
-
-After you finish these 4 functions implementation, run:
-
-```
-% make
-% ./part1_tester
-```
-
-You should get following output:
-
-```
-========== begin test create and getattr ==========
-...
-...
-========== pass test create and getattr ==========
-========== begin test put and get ==========
-...
-...
-========== pass test put and get ==========
-========== begin test remove ==========
-...
-...
-[TEST_ERROR] : error ...
---------------------------------------------------
-Part1 score is : 80/100
-```
-
-### Part 1C: REMOVE
-
-Our job in Part 1C is to implement the remove_file and free_inode of inode_manager, to support the **REMOVE** API of extent_server.
-
-After you finish these 2 functions implementation, run:
-
-```
-% make
-% ./part1_tester
-```
-
-You should get following output:
-
-```
-========== begin test create and getattr ==========
-...
-...
-========== pass test create and getattr ==========
-========== begin test put and get ==========
-...
-...
-========== pass test put and get ==========
-========== begin test remove ==========
-...
-...
-========== pass test remove ==========
---------------------------------------------------
-Part1 score is : 100/100
-```
+  ```
+      % ./grade.sh
+      Passed A
+      Passed B
+      Passed C
+      Passed D
+      Passed E
+      Passed G (consistency)
+      Lab2 part 1 passed
+      ......
+  ```
 
 ## Part 2
 
-In Part 2, you will start your file system implementation by getting the following FUSE operations to work:
+- - In part 2, you will implement a locking service to coordinate updates to the file system structures. Part 2 is further devided into two parts. In
 
-```
-CREATE/MKNOD, LOOKUP, and READDIR
-SETATTR, WRITE and READ
-MKDIR and UNLINK
-SIMBOLIC LINK
-```
+     
 
-(For your own convenience, you may want to implement rmdir to facilitate your debugging/testing.)
+    Part2A
 
-At first, let's review the YFS architecture:
+     
 
-![img](https://ipads.se.sjtu.edu.cn/courses/cse/labs/lab1-pictures/part2.png)
+    you should implement a simple lock server. Then in
 
-In part 2, what you should concern about are the parts framed by the red box above: **FUSE** and **YFS** client.
+     
 
-The **FUSE** interface, in **fuse.cc**. It translates FUSE operations from the FUSE kernel modules into YFS client calls. We provide you with much of the code needed to register with FUSE and receive FUSE operations. We have implemented all of those methods for you except for Symbol Link. So don't modify **fuse.cc** unless you want to implement **Symbol Link**.
+    Part2B
 
-The **YFS client**, in **yfs_client.{cc,h}**. The YFS client implements the file system logic. For example, when creating a new file, your yfs_client will add directory entries to a directory block.
+     
 
-We provide you with the script **start.sh** to automatically start **yfs_client**, and stop.sh to kill previously started processes. Actually, **start.sh** starts one **yfs_client** with **./yfs1** mountpoint. Thus you can type:
+    you will use the lock service to coordinate yfs clients.
+
+    - ![img](https://ipads.se.sjtu.edu.cn/courses/cse/labs/lab2-imgs/lab2-arch.png)
+    - Reference: [Distributed Systems (G22.3033-001, Fall 2009, NYU)](http://www.news.cs.nyu.edu/~jinyang/fa09/notes/ds-lec1.ppt)
 
-```
-% make
-% sudo ./start.sh
-% sudo ./test-lab1-part2-a.pl ./yfs1
-% sudo ./test-lab1-part2-b.pl ./yfs1
-% sudo ./stop.sh
-```
+- ## Part 2A: Lock Server
 
-**Note 1**: Since you need to mount fuse file system, so you should add **sudo** to above commands;
+- - We provide you with a skeleton RPC-based lock server, a lock client interface, a sample application that uses the lock client interface, and a tester. Now compile and start up the lock server, giving it a port number on which to listen to RPC requests. You'll need to choose a port number that other programs aren't using. For example:
 
-**Note 2**: If **stop.sh** reports "Device or resource busy", please **keep executing stop.sh** until it says "not found in /etc/mtab", such as:
+    - ```
+              % make
+              % ./lock_server 3772
+      ```
+
+    - Now open a second terminal on the same machine and run lock_demo, giving it the port number on which the server is listening:
+
+    - ```
+              % ./lock_demo 3772
+              stat request from clt 1386312245
+              stat returned 0
+              %
+      ```
 
-```
-fusermount: entry for /home/your_name/yfs-class/yfs1 not found in /etc/mtab
-fusermount: entry for /home/your_name/yfs-class/yfs2 not found in /etc/mtab
-...
-```
+    - lock_demo asks the server for the number of times a particular lock has been acquired, using the stat RPC that we have provided. In the skeleton code, this will always return 0. You can use it as an example of how to add RPCs. You don't need to fix stat to report the actual number of acquisitions of the given lock in this lab, but you may if you wish.
 
-**Part 2** will be divided into **4 parts**:
+  - The lock client skeleton does not do anything yet for the acquire and release operations; similarly, the lock server does not implement lock granting or releasing. Your job is to implement this functionality in the server, and to arrange for the client to send RPCs to the server.
 
-At the beginning, it will be helpful to scan the **interfaces** and **structs** in **yfs_client.h** and some other files. The functions you have implemented in part 1 are the fundament of this part.
+- ### Your Job
 
-### Part 2A: CREATE/MKNOD, LOOKUP, and READDIR
+- - Your job is to implement a correct lock server assuming a perfect underlying network. Correctness means obeying this invariant: at any point in time, there is at most one client holding a lock with a given identifier.
 
-**Your job**
+  - We will use the program lock_tester to check the correctness invariant, i.e. whether the server grants each lock just once at any given time, under a variety of conditions. You run lock_tester with the same arguments as lock_demo. A successful run of lock_tester (with a correct lock server) will look like this:
 
-In Part 2A your job is to implement the **CREATE/MKNOD**, **LOOKUP** and **READDIR** of **yfs_client.cc** in YFS. You may modify or add any files you like, except that you should not modify the test scripts. Your code should pass the **test-lab1-part2-a.pl** script, which tests creating empty files, looking up names in a directory, and listing directory contents.
+    - ```
+              % ./lock_tester 3772
+              simple lock client
+              acquire a release a acquire a release a
+              acquire a acquire b release b release a
+              test2: client 0 acquire a release a
+              test2: client 2 acquire a release a
+              . . .
+              ./lock_tester: passed all tests successfully
+      ```
 
-On some systems, FUSE uses the MKNOD operation to create files, and on others, it uses CREATE. The two interfaces have slight differences, but in order to spare you the details, we have given you wrappers for both that call the common routine **createhelper()**. You can see it in **fuse.cc**.
+  - If your lock server isn't correct, lock_tester will print an error message. For example, if lock_tester complains "error: server granted XXX twice", the problem is probably that lock_tester sent two simultaneous requests for the same lock, and the server granted both requests. A correct server would have granted the lock to just one client, waited for a release, and only then sent granted the lock to the second client.
 
-As before, if your YFS passes our tester, you are done. If you have questions about whether you have to implement specific pieces of file system functionality, then you should be guided by the tester: if you can pass the tests without implementing something, then you do not have to implement it. For example, you don't need to implement the exclusive create semantics of the CREATE/MKNOD operation.
+- ### Detailed Guidance
 
-**Detailed Guidance**
+- - In principle, you can implement whatever design you like as long as it satisfies the requirements in the "Your Job" section and passes the testers. In practice, you should follow the detailed guidance below.
+    - Using the RPC system:
+      - A server uses the RPC library by creating an RPC server object (rpcs) listening on a port and registering various RPC handlers (see lock_smain.cc). A client creates a RPC client object (rpcc), asks for it to be connected to the lock_server's address and port, and invokes RPC calls (see lock_client.cc).
+      - Each RPC procedure is identified by a unique procedure number. We have defined the acquire and release RPC numbers you will need in lock_protocol.h. You must register handlers for these RPCs with the RPC server object (see lock_smain.cc).
+      - You can learn how to use the RPC system by studying the stat call implementation in lock_client and lock_server. RPC handlers have a standard interface with one to six request arguments and a reply value implemented as a last reference argument. The handler also returns an integer status code; the convention is to return zero for success and to return positive numbers for various errors. If the RPC fails in the RPC library (e.g.timeouts), the RPC client gets a negative return value instead. The various reasons for RPC failures in the RPC library are defined in rpc.h under rpc_const.
+      - The RPC system marshalls objects into a stream of bytes to transmit over the network and unmarshalls them at the other end. Beware: the RPC library does not check that the data in an arriving message have the expected type(s). If a client sends one type and the server is expecting a different type, something bad will happen. You should check that the client's RPC call function sends types that are the same as those expected by the corresponding server handler function.
+      - The RPC library provides marshall/unmarshall methods for standard C++ objects such asstd::string, int, and char. You should be able to complete this lab with existing marshall/unmarshall methods.
+    - Implementing the lock server:
+      - The lock server can manage many distinct locks. Each lock is identified by an integer of type lock_protocol::lockid_t. The set of locks is open-ended: if a client asks for a lock that the server has never seen before, the server should create the lock and grant it to the client. When multiple clients request the same lock, the lock server must grant the lock to one client at a time.
+      - You will need to modify the lock server skeleton implementation in files lock_server.{cc,h} to accept acquire/release RPCs from the lock client, and to keep track of the state of the locks. Here is our suggested implementation plan.
+        - On the server, a lock can be in one of two states:
+          - free: no clients own the client
+          - locked: some client owns the lock
+          - The RPC handler for acquire should first check if the lock is locked, and if so, the handler should block until the lock is free. When the lock is free,acquire changes its state tolocked, then returns to the client, which indicates that the client now has the lock. The valuer returned by acquiredoesn't matter. The handler for release should change the lock state to free, and notify any threads that are waiting for the lock. Consider using the C++ STL (Standard Template Library) std::map class to hold the table of lock states.
+        - Implementing the lock client:
+          - The class lock_client is a client-side interface to the lock server (found in files lock_client.{cc,h}). The interface provides acquire() and release() functions that should send and receive RPCs. Multiple threads in the client program can use the same lock_client object and request the same lock. See lock_demo.cc for an example of how an application uses the interface. lock_client::acquire must not return until it has acquired the requested lock.
+        - Handling multi-thread concurrency:
+          - Both lock_client and lock_server's functions will be invoked by multiple threads concurrently. On the lock server side, the RPC library keeps a thread pool and invokes the RPC handler using one of the idle threads in the pool. On the lock client side, many different threads might also call lock_client's acquire() and release() functions concurrently.
+          - You should use pthread mutexes to guard uses of data that is shared among threads. You should use pthread condition variables so that the lock server acquire handler can wait for a lock. The Lab Information contain a link to information about pthreads, mutexes, and condition variables. Threads should wait on a condition variable inside a loop that checks the boolean condition on which the thread is waiting. This protects the thread from spurious wake-ups from the pthread_cond_wait() and pthread_cond_timedwait() functions.
+          - Use a simple mutex scheme: a single pthreads mutex for all of lock_server. You don't really need (for example) a mutex per lock, though such a setup can be made to work. Using "coarse-granularity" mutexes will simplify your code.
 
-1. When creating a new file (fuseserver_createhelper) or directory (fuseserver_mkdir), you must assign a unique inum (which you’ve done in part1).
+- ## Part 2B: Locking
 
-   **Note**: Though you are free to choose any inum identifier you like for newly created files, FUSE assumes that the inum for the root directory is 0x00000001. Thus, you'll need to ensure that when yfs_client starts, it is ready to export an empty directory stored under that inum.
+- - Next, you are going to ensure the atomicity of file system operations when there are multiple yfs_client processes sharing a file system. Your current implementation does not handle concurrent operations correctly. For example, your yfs_client's create method probably reads the directory's contents from the extent server, makes some changes, and stores the new contents back to the extent server. Suppose two clients issue simultaneous CREATEs for different file names in the same directory via different yfs_client processes. Both yfs_client processes might fetch the old directory contents at the same time and each might insert the newly created file for its client and write back the new directory contents. Only one of the files would be present in the directory in the end. The correct answer, however, is for both files to exist. This is one of many potential races. Others exist: concurrent CREATE and UNLINK, concurrent MKDIR and UNLINK, concurrent WRITEs, etc.
+  - You should eliminate YFS races by having yfs_client use your lock server's locks. For example, a yfs_client should acquire a lock on the directory before starting a CREATE, and only release the lock after finishing the write of the new information back to the extent server. If there are concurrent operations, the locks force one of the two operations to delay until the other one has completed. All yfs_clients must acquire locks from the same lock server.
 
-2. Directory format: Next, you must choose the **format for directories**. A directory's content contains a set of name to inode number mappings. You should store a directory's entire content in a directory (recall what you learned). A simple design will make your code simple. You may refer to the **FAT32** specification (http://staff.washington.edu/dittrich/misc/fatgen103.pdf) or the EXT inode design (http://en.wikipedia.org/wiki/Inode_pointer_structure) for an example to follow. **Note**: As is mentioned in Wikipedia (http://en.wikipedia.org/wiki/Ext3), the EXT3 filesystem which we go after supports any characters but '\0' and '/' in the filename. Make sure your code passes when there's '$', '_', ' ', etc, in the filename.
+- ### Your Job
 
-3. FUSE:When a program (such as ls or a test script) manipulates a file or directory (such as yfs1) served by your **yfs_client**, the FUSE code in the kernel sends corresponding operations to yfs_client via FUSE. The code we provide you in **fuse.cc** responds to each such operation by calling one of a number of procedures, for create, read, write, etc. operations. You should modify the relevant routines in fuse.cc to call methods in **yfs_client.cc**. **fuse.cc** should just contain glue code, and the core of your file system logic should be in **yfs_client.cc**. For example, to handle file creation, fuseserver_createhelper to call yfs->create(...), and you should complete the create(...) method to **yfs_client.cc**. Look at getattr() in **fuse.cc** for an example of how a fuse operation handler works, how it calls methods in **yfs_client**, and how it sends results and errors back to the kernel. YFS uses FUSE's "lowlevel" API.
+- - Your job is to add locking to yfs_client to ensure the correctness of concurrent operations. The testers for this part of the lab are test-lab2-part2-a and test-lab2-part2-b, source in test-lab2-part2-a.c and test-lab2-part2-b.c. The testers take two directories as arguments, issue concurrent operations in the two directories, and check that the results are consistent with the operations executing in some sequential order. Here's a successful execution of the testers:
 
-4. YFS code:The bulk of your file system logic should be in **yfs_client**, for the most part in routines that correspond to fuse operations (create, read, write, mkdir, etc.). Your **fuse.cc** code should pass inums, file names, etc. to your **yfs_client** methods. Your **yfs_client** code should retrieve file and directory contents from the extent client with get(), using the inum as the extent ID. In the case of directories, your **yfs_client** code should parse the directory content into a sequence of name/inum pairs (i.e. yfs_client::dirents), for lookups, and be able to add new name/inum pairs.
+    - ```
+              % ./start.sh
+              % ./test-lab2-part2-a ./yfs1 ./yfs2
+              Create then read: OK
+              Unlink: OK
+              Append: OK
+              Readdir: OK
+              Many sequential creates: OK
+              Write 20000 bytes: OK
+              Concurrent creates: OK
+              Concurrent creates of the same file: OK
+              Concurrent create/delete: OK
+              Concurrent creates, same file, same server: OK
+              test-lab2-part2-b: Passed all tests.
+              % ./stop.sh
+      ```
 
-5. A reasonable way to get going on **fuss.cc** is to run **test-lab1-part2-a.pl**, find the function in fuse.cc whose missing implementation is causing the tester to fail, and start fixing that function. Look at the end of **yfs_client1.log** and/or add your own print statements to **fuse.cc**. If a file already exists, the CREATE operator (fuseserver_create and fuseserver_mknod) should return EEXIST to FUSE.
+    - ```
+              % ./start.sh
+              % ./test-lab2-part2-b ./yfs1 ./yfs2
+              Create/delete in separate directories: tests completed OK
+              % ./stop.sh
+      ```
 
-6. **start.sh** redirects the STDOUT and STDERR of the servers to files in the current directory. For example, any output you make from **fuse.cc** will be written to yfs_client1.log. Thus, you should look at these files for any debug information you print out in your code.
+  - If you try this before you add locking, it should fail at "Concurrent creates" test in test-lab2-part1-a. If it fails before "Concurrent creates", your code may have bugs despite having passed previous testers; you should fix them before adding locks.
 
-7. If you wish to test your code with only some of the FUSE hooks implemented, be advised that FUSE may implicitly try to call other hooks. For example, FUSE calls LOOKUP when mounting the file system, so you may want to implement that first. FUSE prints out to the **yfs_client1.log** file the requests and results of operations it passes to your file system. You can study this file to see exactly what hooks are called at every step.
+- ### Detailed Guidance
 
-**About Test**
+- - What to lock?
+    - At one extreme you could have a single lock for the whole file system, so that operations never proceed in parallel. At the other extreme you could lock each entry in a directory, or each field in the attributes structure. Neither of these is a good idea! A single global lock prevents concurrency that would have been okay, for example CREATEs in different directories. Fine-grained locks have high overhead and make deadlock likely, since you often need to hold more than one fine-grained lock.
+    - You should associate a lock with each inumber. Use the file or directory's inum as the name of the lock (i.e. pass the inum to acquire and release). The convention should be that any yfs_client operation should acquire the lock on the file or directory it uses, perform the operation, finish updating the extent server (if the operation has side-effects), and then release the lock on the inum. Be careful to release locks even for error returns from yfs_client operations.
+    - You'll use your lock server from part 1. yfs_client should create and use a lock_client in the same way that it creates and uses its extent_client.
+    - **(Be warned! Do not use a block/offset based locking protocol! Many adopters of a block-id-as-lock ended up refactoring their code in labs later on.)**
+    - **(Notice: If you don't implement a reentrant lock, be careful not to recursively acquire the same lock in a thread.)**
+  - Things to watch out for:
+    - This is the first lab that creates files using two different YFS-mounted directories. If you were not careful in earlier labs, you may find that the components that assign inum for newly-created files and directories choose the same identifiers.
+    - If your inode manager relies on pseudo-randomness to generate unique inode number, one possible way to fix this may be to seed the random number generator differently depending on the process's pid. The provided code has already done such seeding for you in the main function of fuse.cc.
 
-The Lab tester for Part 2A is **test-lab1-part2-a.pl**. Run it with your YFS mountpoint as the argument. Here's what a successful run of **test-lab1-part2-a.pl** looks like:
+- ## Part 3: Lock Cache
 
-```
-% make
-% sudo ./start.sh
-starting ./yfs_client /home/lab/Courses/CSE-g/lab1-sol/yfs1  > yfs_client1.log 2>&1 &
-% sudo ./test-lab1-part2-a.pl ./yfs1
-create file-yyuvjztagkprvmxjnzrbczmvmfhtyxhwloulhggy-18674-0
-create file-hcmaxnljdgbpirprwtuxobeforippbndpjtcxywf-18674-1
-...
-Passed all tests!
-```
+- - In this lab you will build a lock server and client that cache locks at the client, reducing the load on the server and improving client performance. For example, suppose that an application using YFS creates 100 files in a directory. Your Lab 2 yfs_client will probably send 100 acquire and release RPCs for the directory's lock. This lab will modify the lock client and server so that the lock client sends (in the common case) just one acquire RPC for the directory's lock, and caches the lock thereafter, only releasing it if another yfs_client needs it.
+  - The challenge in the lab is the protocol between the clients and the server. For example, when client 2 acquires a lock that client 1 has cached, the server must revoke that lock from client 1 by sending a revoke RPC to client 1. The server can give client 2 the lock only after client 1 has released the lock, which may be a long time after sending the revoke (e.g., if a thread on client 1 holds the lock for a long period). The protocol is further complicated by the fact that concurrent RPC requests and replies may not be delivered in the same order in which they were sent.
+  - We'll test your caching lock server and client by seeing whether it reduces the amount of lock RPC traffic that your yfs_client generates. We will test with both RPC_LOSSY set to 0 and RPC_LOSSY set to 5.
 
-The tester creates lots of files with names like file-XXX-YYY-Z and checks that they appear in directory listings.
+- In this part, the following files will be used:
 
-If **test-lab1-part2-a.pl** exits without printing "Passed all tests!", then it thinks something is wrong with your file server. For example, if you run **test-lab1-part2-a.pl** on the skeleton code we give you, you'll probably see some error message like this:
+- - **lock_client_cache.{cc,h}**: This will be the new lock client class that the lock_tester and your yfs_client should instantiate. lock_client_cache must receive revoke RPCs from the server (as well as retry RPCs, explained below), so we have provided you with code in the lock_client_cache constructor that picks a random port to listen on, creates an rpcs for that port, and constructs an id string with the client's IP address and port that the client can send to the server when requesting a lock. Note that although lock_client_cache extends the lock_client class from Lab 2, you probably won't be able to reuse any code from the parent class; we use a subclass here so that yfs_client can use the two implementations interchangeably. However, you might find some member variables useful (such as lock_client's RPC client cl).
+  - **lock_server_cache.{cc,h}**: Similarly, you will not necessarily be able to use any code from lock_server. lock_server_cache should be instantiated by lock_smain.cc, which should also register the RPC handlers for the new class.
+  - **handle.{cc,h}**: this class maintains a cache of RPC connections to other servers. You will find it useful in your lock_server_cache when sending revoke and retry RPCs to lock clients. Look at the comments at the start of handle.h. You can pass the lock client's id string to handle to tell it which lock client to talk to.
+  - **tprintf.h**: this file defines a macro that prints out the time when a printf is invoked. You may find this helpful in debugging distributed deadlocks.
 
-```
-test-lab1-part2-a: cannot create /tmp/b/file-ddscdywqxzozdoabhztxexkvpaazvtmrmmvcoayp-21501-0 :
-    No such file or directory
-```
+- Notice: Before testing, you also need to modify some codes in lock_tester.cc, lock_smain.cc, yfs_client.cc to use lock_client_cache and lock_server_cache.
 
-This error message appears because you have not yet provided code to handle the CREATE/MKNOD operation with FUSE. That code belongs in fuseserver_createhelper in **fuse.cc**.
+- ### Your Job
 
-**Note**: testing Part 2A on the command line using commands like touch will not work until you implement the SETATTR operation in Part 2B. For now, you should do your testing via the creat/open, lookup, and readdir system calls in a language like Perl, or simply use the provided test script.
+- ### Step One: Design the Protocol
 
-**Note**: if you are sure that there is not any mistake in your implementation for part1 and still cannot pass this test, maybe there are some **bugs in your part1**, especially read_file and write_file. Remeber that passing the test do not guarantee completely correct.
+- Your lock client and lock server will each keep some state about each lock, and will have a protocol by which they change that state. Start by making a design (on paper) of the states, protocol, and how the protocol messages generate state transitions. Do this before you implement anything (though be prepared to change your mind in light of experience). Here is the set of states we recommend for the client:
 
-### Part 2B: SETATTR, READ, WRITE
+- - none: client knows nothing about this lock
+  - free: client owns the lock and no thread has it
+  - locked: client owns the lock and a thread has it
+  - acquiring: the client is acquiring ownership
+  - releasing: the client is releasing ownership
 
-**Your job**
+- 1. A single client may have multiple threads waiting for the same lock, but only one thread per client ever needs to be interacting with the server; once that thread has acquired and released the lock it can wake up other threads, one of which can acquire the lock (unless the lock has been revoked and released back to the server). If you need a way to identify a thread, you can use its thread id (tid), which you can get using pthread_self().
+  2. When a client asks for a lock with an acquire RPC, the server grants the lock and responds with OK if the lock is not owned by another client (i.e., the lock is free). If the lock is not free, and there are other clients waiting for the lock, the server responds with a RETRY. Otherwise, the server sends a revoke RPC to the owner of the lock, and waits for the lock to be released by the owner. Finally, the server sends a retry to the next waiting client (if any), grants the lock and responds with OK.
+  3. Note that RETRY and retry are two different things. RETRY is the value the server returns for a acquire RPC to indicate that the requested lock is not currently available. retry is the RPC that the server sends the client which is scheduled to hold a previously requested lock next.
+  4. Once a client has acquired ownership of a lock, the client caches the lock (i.e., it keeps the lock instead of sending a release RPC to the server when a thread releases the lock on the client). The client can grant the lock to other threads on the same client without interacting with the server.
+  5. The server sends the client a revoke RPC to get the lock back. This request tells the client that it should send the lock back to the server when it releases the lock or right now if no thread on the client is holding the lock.
+  6. The server's per-lock state should include whether it is held by some client, the ID (host name and port number) of that client, and the set of other clients waiting for that lock. The server needs to know the holding client's ID in order to sent it a revoke message when another client wants the lock. The server needs to know the set of waiting clients in order to send one of them a retry RPC when the holder releases the lock.
+  7. For your convenience, we have defined a new RPC protocol called rlock_protocol in lock_protocol.h to use when sending RPCs from the server to the client. This protocol contains definitions for the retry and revoke RPCs.
+  8. **Hint: don't hold any mutexes while sending an RPC.** An RPC can take a long time, and you don't want to force other threads to wait. Worse, holding mutexes during RPCs is an easy way to generate distributed deadlock.
 
-In Part 2B your job is to implement SETATTR, WRITE, and READ FUSE operations in **fuse.cc** and **yfs_client.cc**. Once your server passes **test-lab1-part2-b.pl**, you are done. Please don't modify the test program or the RPC library. We will use our own versions of these files during grading.
+- The following questions might help you with your design (they are in no particular order):
 
-**Detailed Guidance**
+- - If a thread on the client is holding a lock and a second thread calls acquire(), what happens? You shouldn't need to send an RPC to the server.
+  - How do you handle a revoke on a client when a thread on the client is holding the lock? How do you handle a retry showing up on the client before the response on the corresponding acquire?
+  - How do you handle a revoke showing up on the client before the response on the corresponding acquire?
 
-1. Implementing SETATTR. The operating system can tell your file system to set one or more attributes via the FUSE SETATTR operation. See [fuse_lowlevel.h](https://sourceforge.net/u/noon/fuse/ci/ecd073bd7054c9e13516041e3ef930e39270c8df/tree/include/fuse_lowlevel.h) for the relevant definitions. The **to_set** argument to your SETATTR handler is a mask that indicates which attributes should be set. There is really only one attribute (the file size attribute) you need to pay attention to (but feel free to implement the others if you like), indicated by bit **FUSE_SET_ATTR_SIZE**. Just AND (i.e., &) the to_set mask value with an attribute's bitmask to see if the attribute is to be set. The new value for the attribute to be set is in the attar parameter passed to your SETATTR handler. The operating system may implement overwriting an existing file with a call to SETATTR (to truncate the file) rather than CREATE. Setting the size attribute of a file can correspond to truncating it completely to zero bytes, truncating it to a subset of its current length, or even padding bytes on to the file to make it bigger. Your system should handle all these cases correctly.
-2. Implementing READ/WRITE:A read (fuseserver_read) wants up to size bytes from a file, starting from a certain offset. When less than size bytes are available, you should return to fuse only the available number of bytes. See the manpage for read(2) for details. For writes (fuseserver_write), a non-obvious situation may arise if the client tries to write at a file offset that's past the current end of the file. Linux expects the file system to return '\0's for any reads of unwritten bytes in these "holes" (see the manpage for [lseek(2)](http://man7.org/linux/man-pages/man2/lseek.2.html) for details). Your write should handle this case correctly.
+- Hint: a client may receive a revoke RPC for a lock before it has received an OK response from its acquire RPC. Your client code will need to remember the fact that the revoke has arrived, and release the lock as soon as you are done with it. The same situation can arise with retry RPCs, which can arrive at the client before the corresponding acquire returns the RETRY failure code.
 
-**About Test**
+- ### Step Two: Lock Client and Server, and Testing with RPC_LOSSY=0
 
-**test-lab1-part2-b.pl** tests reading, writing, and appending to files. To run the tester, first start one yfs_client using the **start.sh** script.
+- - If you finished your design, or decided to refer to the design presented in the comments of the handout code, please move on.
 
-```
-% sudo ./start.sh
-```
+    
 
-Now run test-lab1-part2-b.pl by passing the yfs1 mountpoint.
+  - A reasonable first step would be to implement the basic design of your acquire protocol on both the client and the server, including having the server send revoke messages to the holder of a lock if another client requests it, and retry messages to the next waiting client.
 
-```
-% sudo ./test-lab1-part2-b.pl ./yfs1
-Write and read one file: OK
-Write and read a second file: OK
-Overwrite an existing file: OK
-Append to an existing file: OK
-Write into the middle of an existing file: OK
-Check that one cannot open non-existant file: OK
-Check directory listing: OK
-Passed all tests
+  - Next you'll probably want to implement the release code path on both the client and the server. Of course, the client should only inform the server of the release if the lock has been revoked. Also make sure you instantiate a lock_server_cache object in lock_smain.cc, and correctly register the RPC handlers.
 
-% sudo ./stop.sh
-```
+  - Once you have your full protocol implemented, you can run it using the lock tester, just as in part 2. For now, don't bother testing with loss:
 
-If **test-lab1-part2-b.pl** exits without printing "Passed all tests!" or hangs indefinitely, then something is wrong with your file server. After you are done with Part 2, you should go back and test with **test-lab1-part2-a.pl** again to make sure you did not break anything.
+  - ```
+        % export RPC_LOSSY=0
+        % ./lock_server 3772
+    ```
 
-### Part 2C: MKDIR and UNLINK
+  - Then, in another terminal:
 
-**Your job**
+  - ```
+        % ./lock_tester 3772
+    ```
 
-In Part 2C your job is to handle the MKDIR and UNLINK FUSE operations. For MKDIR, you do not have to create "." or ".." entries in the new directory since the Linux kernel handles them transparently to YFS. UNLINK should always free the file's extent; you do not need to implement UNIX-style link counts.
+  - Run lock_tester. You should pass all tests and see no timeouts. You can hit Ctrl-C in the server's window to stop it.
 
-**About Test** If your implementation passes the **test-lab1-part2-c.pl** script, you are done with part 3. The test script creates a directory, creates and deletes lots of files in the directory, and checks file and directory mtimes and ctimes. **Note** that this is the first test that explicitly checks the correctness of these time attributes. A create or delete should change both the parent directory's mtime and ctime (here you should decide which level you can **modify the 3 time attributes**, and think about why?). Here is a successful run of the tester:
+  - A lock client might be holding cached locks when it exits. This may cause another run of lock_tester using the same lock_server to fail when the lock server tries to send revokes to the previous client. To avoid this problem without worrying about cleaning up, you must restart the lock_server for each run of lock_tester.
 
-```
-% sudo ./start.sh
-% sudo ./test-lab1-part2-c .pl ./yfs1
-mkdir ./yfs1/d3319
-create x-0
-delete x-0
-create x-1
-checkmtime x-1
-...
-delete x-33
-dircheck
-Passed all tests!
-% sudo ./stop.sh
-```
+- ### Step Three: Testing the Lock Client and Server with RPC_LOSSY=5
 
-**Note**: Now run the command sudo ./grade and you should pass A, B, C and E.
+- Now that it works without loss, you should try testing with RPC_LOSSY=5. Here you may discover problems with reordered RPCs and responses.
 
-### Part 2D: SYMLINK, READLINK
+- ```
+      % export RPC_LOSSY=5
+      % ./lock_server 3772
+  ```
 
-Please implement symbolic link. To implement this feature, you should refer to the FUSE documentation available online and figure out the methods you need to implement. It's all on yourself. Also, look out for comments and hints in the hand-out code. **Note**: remember to add related method to fuse.cc. You may want to refer to http://stackoverflow.com/questions/6096193/how-to-make-symbolic-links-in-fuse and https://fossies.org/dox/fuse-3.6.2/structfuse__operations.html .
+- Then, in another terminal:
 
-**GRADING**
+- ```
+      % export RPC_LOSSY=5
+      % ./lock_tester 3772
+  ```
 
-Finally, after you've implemented all these features, run the grading script:
+- Again, you must restart the lock_server for each run of lock_tester.
 
-```
-% ./grade.sh
-Passed A
-Passed B
-Passed C
-Passed D
-Passed E
-Passed all tests!
-Part2 score: 100/100
-```
+- ### Step Four: Run File System Tests
 
-Note that if you encounter a **"yfs_client DIED"**, your filesystem is not working. In such cases the requests are served by the system's file system (usually EXT3 or btrfs or tmpfs). **You would not be awarded credits if your yfs_client crashes, but could get partial credit if it produces incorrect result for some test cases**. So do look out for such mistakes. **We've seen dozens of students every year thinking that they've passed lots of tests before realizing this**.
+- - In the constructor for your yfs_client, you should now instantiate a lock_client_cache object, rather than a lock_client object. You will also have to include lock_client_cache.h. Once you do that, your YFS should just work under all the tests in part1&2. We will run your code against all tests from part1&2.
 
-## Handin Procedure
+  - You should also compare running your YFS code with the two different lock clients and servers, with RPC count enabled at the lock server. For this reason, it would be helpful to keep your previous code around and intact, the way it was when you submitted it. As mentioned before, you can turn on RPC statistics using the RPC_COUNT environment variable. Look for a dramatic drop in the number of acquire (0x7001) RPCs between your part2 and part3 code during the test-lab2-part3-b test.
 
-After all above done:
+  - The file system tests should pass with RPC_LOSSY set as well. You can pass a loss parameter to start.sh and it will enable RPC_LOSSY automatically:
 
-```
-% cd /path_to_cselab/lab1
-% make handin
-```
+    ```
+    % ./start.sh 5 # sets RPC_LOSSY to 5
+    ```
 
-That should produce a file called lab1.tgz in your lab1/ directory. Change the file name to your student id:
+  - If you're having trouble, make sure that the part 2 tester passes. If it doesn't, then the issues are most likely with YFS under RPC_LOSSY, rather than your caching lock client.
 
-```
-% mv lab.tgz [your student id]-lab1.tgz
-```
+- ### Evaluation Criteria
 
-Then upload **[your student id]-lab1.tgz** file to **ftp://skyele:public@public.sjtu.edu.cn/upload/lab1** (username: skyele, password: public) before the deadline. You are only given the permission to list and create new file, but no overwrite and read. So make sure your implementation has passed all the tests before final submit. (If you must re-submit a new version, add explicit version number such as "V2" to indicate).
+- - Our measure of performance is the number of acquire RPCs sent to your lock server while running yfs_client and test-lab2-part3-b.
 
-You will receive full credit if your software passes the same tests we gave you when we run your software on our machines.
+  - The RPC library has a feature that counts unique RPCs arriving at the server. You can set the environment variable RPC_COUNT to N before you launch a server process, and it will print out RPC statistics every N RPCs. For example, in the bash shell you could do:
 
-Please take your time examining this lab and the overall architecture of yfs. There are more interesting challenges ahead waiting for you.
+    ```
+        % export RPC_COUNT=25
+        % ./lock_server 3772
+        RPC STATS: 7001:23 7002:2
+        ...
+    ```
+
+  - This means that the RPC with the procedure number 0x7001 (acquire in the original lock_protocol.h file) has been called 23 times, while RPC 0x7002 (release) has been called twice.
+
+  - test-lab2-part3-b creates two subdirectories and creates/deletes 100 files in each directory, using each directory through only one of the two YFS clients. You should count the acquire RPCs for your part 2 and for your part 3 (which means you should run test-lab2-part3-b in your part 2 code). If your part 3 produces a factor of 10 fewer acquire RPCs, then you are doing a good job. This performance goal is vague because the exact numbers depend a bit on how you use locks in yfs_client.
+
+  - We will check the following:
+
+    - Your caching lock server passes lock_tester with RPC_LOSSY=0 and RPC_LOSSY=5.
+    - Your file system using the caching lock client passes all the part 3 tests (a, b) with RPC_LOSSY=0 and RPC_LOSSY=5.
+    - Your part 3 code generates about a tenth as many acquire RPCs as your part 2 code on test-lab2-part3-b.
+
+- ## Grading
+
+- After you have implement part1&part2, run the grading script:
+
+- ```
+      % ./grade.sh
+      Passed part1 A
+      Passed part1 B
+      Passed part1 C
+      Passed part1 D
+      Passed part1 E
+      Passed part1 G (consistency)
+      Lab2 part 1 passed
+      Concurrent creates: OK
+      Concurrent creates of the same file: OK
+      Concurrent create/delete: OK
+      Concurrent creates, same file, same server: OK
+      Concurrent writes to different parts of same file: OK
+      Passed part2 A
+      Create/delete in separate directories: tests completed OK
+      Passed part2 B
+  
+      Score: 120/120
+  ```
+
+- We will test your lock server with cache following the evaluation criteria above. You part3 score is proportional to the RPC reduction factor(a factor of 10 will be the full score).
+
+- ## Tips
+
+- - This is also the first lab that writes null ('\0') characters to files. The std::string(char*)constructor treats '\0' as the end of the string, so if you use that constructor to hold file content or the written data, you will have trouble with this lab. Use the std::string(buf, size) constructor instead. Also, if you use C-style char[] carelessly you may run into trouble!
+  - Do notice that a non RPC version may pass the tests, but RPC is checked against in actual grading. So please refrain yourself from doing so ;)
+
+- ## Handin procedure
+
+- - After all above done:
+
+    ```
+    % make handin
+    ```
+
+  - That should produce a file called lab2.tgz in the directory. Change the file name to your student id:
+
+    ```
+    % mv lab2.tgz lab2_[your student id].tgz
+    ```
+
+  - Then upload lab2_[your student id].tgz file to ftp://esdeath:public@public.sjtu.edu.cn/upload/cse/lab2/ before the deadline. You are only given the permission to list and create new file, but no overwrite and read. So make sure your implementation has passed all the tests before final submit.
+
+  - You will receive full credits if your software passes the same tests we gave you when we run your software on our machines.
