@@ -16,7 +16,7 @@ my $files = { };
 my @dead;
 
 for(my $iters = 0; $iters < 200; $iters++){
-    print STDERR "test-lab1-part2-a: begin createone $iters...\n";
+    # print STDERR "test-lab1-part2-a: begin createone $iters...\n";
     createone();
 }
 

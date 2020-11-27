@@ -45,7 +45,7 @@ getattr(yfs_client::inum inum, struct stat &st)
     bzero(&st, sizeof(st));
 
     st.st_ino = inum;
-    printf("getattr %016llx %d\n", inum, yfs->isfile(inum));
+    // printf("getattr %016llx %d\n", inum, yfs->isfile(inum));
     if(yfs->isfile(inum)){
         yfs_client::fileinfo info;
         ret = yfs->getfile(inum, info);
@@ -57,7 +57,7 @@ getattr(yfs_client::inum inum, struct stat &st)
         st.st_mtime = info.mtime;
         st.st_ctime = info.ctime;
         st.st_size = info.size;
-        printf("   getattr -> %llu\n", info.size);
+        // printf("   getattr -> %llu\n", info.size);
     } 
     else if (yfs->issymlink(inum)){
         yfs_client::fileinfo info;
@@ -70,7 +70,7 @@ getattr(yfs_client::inum inum, struct stat &st)
         st.st_mtime = info.mtime;
         st.st_ctime = info.ctime;
         st.st_size = info.size;
-        printf("   getattr -> %llu\n", info.size);
+        // printf("   getattr -> %llu\n", info.size);
     }
     else {
         yfs_client::dirinfo info;
@@ -82,7 +82,7 @@ getattr(yfs_client::inum inum, struct stat &st)
         st.st_atime = info.atime;
         st.st_mtime = info.mtime;
         st.st_ctime = info.ctime;
-        printf("   getattr -> %lu %lu %lu\n", info.atime, info.mtime, info.ctime);
+        // printf("   getattr -> %lu %lu %lu\n", info.atime, info.mtime, info.ctime);
     }
     return yfs_client::OK;
 }
@@ -135,12 +135,12 @@ void
 fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
         int to_set, struct fuse_file_info *fi)
 {
-    printf("fuseserver_setattr 0x%x\n", to_set);
+    // printf("fuseserver_setattr 0x%x\n", to_set);
     if ((FUSE_SET_ATTR_SIZE & to_set)
     || (FUSE_SET_ATTR_ATIME & to_set) 
     || (FUSE_SET_ATTR_MTIME & to_set)
     ) {
-        printf("   fuseserver_setattr set size to %zu\n", attr->st_size);
+        // printf("   fuseserver_setattr set size to %zu\n", attr->st_size);
         struct stat st;
 
 #if 1
@@ -273,7 +273,7 @@ fuseserver_create(fuse_req_t req, fuse_ino_t parent, const char *name,
     yfs_client::status ret;
     if( (ret = fuseserver_createhelper( parent, name, mode, &e, extent_protocol::T_FILE)) == yfs_client::OK ) {
         fuse_reply_create(req, &e, fi);
-        printf("OK: create returns.\n");
+        // printf("OK: create returns.\n");
     } else {
         if (ret == yfs_client::EXIST) {
             fuse_reply_err(req, EEXIST);
@@ -370,7 +370,7 @@ fuseserver_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
     yfs_client::inum inum = ino; // req->in.h.nodeid;
     struct dirbuf b;
 
-    printf("fuseserver_readdir\n");
+    // printf("fuseserver_readdir\n");
 
     if(!yfs->isdir(inum)){
         fuse_reply_err(req, ENOTDIR);
@@ -464,7 +464,7 @@ fuseserver_statfs(fuse_req_t req)
 {
     struct statvfs buf;
 
-    printf("statfs\n");
+    // printf("statfs\n");
 
     memset(&buf, 0, sizeof(buf));
 
@@ -527,25 +527,24 @@ main(int argc, char *argv[])
 
     setvbuf(stdout, NULL, _IONBF, 0);
 
-#if 1
+#if 0
     if(argc != 4){
         fprintf(stderr, "Usage: yfs_client <mountpoint> <port-extent-server> <port-lock-server>\n");
         exit(1);
     }
-#else
+#endif
     if(argc != 2){
         fprintf(stderr, "Usage: yfs_client <mountpoint>\n");
         exit(1);
     }
-#endif
     mountpoint = argv[1];
 
     srandom(getpid());
 
     myid = random();
 
-    yfs = new yfs_client(argv[2], argv[3]);
-    //yfs = new yfs_client();
+    // yfs = new yfs_client(argv[2], argv[3]);
+    yfs = new yfs_client();
 
     fuseserver_oper.getattr    = fuseserver_getattr;
     fuseserver_oper.statfs     = fuseserver_statfs;
@@ -573,6 +572,10 @@ main(int argc, char *argv[])
 #ifdef __APPLE__
     fuse_argv[fuse_argc++] = "-o";
     fuse_argv[fuse_argc++] = "nolocalcaches"; // no dir entry caching
+    // fuse_argv[fuse_argc++] = "-o";
+    // fuse_argv[fuse_argc++] = "kernel_cache"; 
+    // fuse_argv[fuse_argc++] = "-o";
+    // fuse_argv[fuse_argc++] = "auto_cache";
     fuse_argv[fuse_argc++] = "-o";
     fuse_argv[fuse_argc++] = "daemon_timeout=86400";
 #endif
@@ -582,7 +585,7 @@ main(int argc, char *argv[])
     //fuse_argv[fuse_argc++] = "allow_other";
 
     fuse_argv[fuse_argc++] = mountpoint;
-    fuse_argv[fuse_argc++] = "-d";
+    // fuse_argv[fuse_argc++] = "-d";
 
     fuse_args args = FUSE_ARGS_INIT( fuse_argc, (char **) fuse_argv );
     int foreground;

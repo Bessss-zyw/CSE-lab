@@ -18,9 +18,6 @@ disk::read_block(blockid_t id, char *buf)
 void
 disk::write_block(blockid_t id, const char *buf)
 {
-  if (id < 0 || id >= BLOCK_NUM || buf == NULL)
-    return;
-
   memcpy(blocks[id], buf, BLOCK_SIZE);
   return;
 }
@@ -51,11 +48,11 @@ block_manager::alloc_block()
   using_blocks[id] = ALLOC;
 
   /* write disk bitmap */
-  uint32_t b = BBLOCK(id), pos = id % BPB;
-  char buf[BLOCK_SIZE];
-  read_block(b, buf);
-  buf[pos / 8] = buf[pos / 8] | (0x1 << (pos % 8));
-  write_block(b, buf);
+  // uint32_t b = BBLOCK(id), pos = id % BPB;
+  // char buf[BLOCK_SIZE];
+  // read_block(b, buf);
+  // buf[pos / 8] = buf[pos / 8] | (0x1 << (pos % 8));
+  // write_block(b, buf);
 
   return id;
 }
@@ -72,11 +69,11 @@ block_manager::free_block(uint32_t id)
   using_blocks[id] = FREE;
 
   /* write disk bitmap */
-  uint32_t b = BBLOCK(id), pos = id % BPB;
-  char buf[BLOCK_SIZE];
-  read_block(b, buf);
-  buf[pos / 8] = buf[pos / 8] & ~(0x1 << (pos % 8));
-  write_block(b, buf);
+  // uint32_t b = BBLOCK(id), pos = id % BPB;
+  // char buf[BLOCK_SIZE];
+  // read_block(b, buf);
+  // buf[pos / 8] = buf[pos / 8] & ~(0x1 << (pos % 8));
+  // write_block(b, buf);
 
 
   return;
@@ -114,7 +111,7 @@ inode_manager::inode_manager()
   bm = new block_manager();
   uint32_t root_dir = alloc_inode(extent_protocol::T_DIR);
   if (root_dir != 1) {
-    printf("\t\tim::inode_manager  error! alloc first inode %d, should be 1\n", root_dir);
+    // printf("\t\tim::inode_manager  error! alloc first inode %d, should be 1\n", root_dir);
     exit(0);
   }
 }
@@ -400,7 +397,7 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
     memcpy(buf_block, buf + write_size, rem_size);
     bm->write_block(new_blocks[i], buf_block);
   }
-  printf("\t\tim::write_file after write file_size = %d\n", size);
+  // printf("\t\tim::write_file after write file_size = %d\n", size);
   
   /* modify inode */
   ino->mtime = time(NULL);
