@@ -143,7 +143,8 @@ inode_manager::alloc_inode(uint32_t type)
   
   if (inum == INODE_NUM){ 
     printf("\t\tim::alloc_inode too much files\n");
-    exit(0);
+    return 0;
+    // exit(0);
   }
   // printf("\tim::alloc_inode alloc inode %d\n", inum);
 
@@ -408,7 +409,9 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
   ino->ctime = time(NULL);
   ino->size = size;
   put_inode(inum, ino);
+  printf("\t\tim::write_file write inode finish\n");
   put_blocks(inum, new_bcount, new_blocks);
+  printf("\t\tim::write_file write block finish\n");
 
   /* free malloc space */
   free(ino);

@@ -13,8 +13,8 @@ yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
 {
     ec = new extent_client(extent_dst);
     // Lab2: Use lock_client_cache when you test lock_cache
-    // lc = new lock_client(lock_dst);
-    lc = new lock_client_cache(lock_dst);
+    lc = new lock_client(lock_dst);
+    // lc = new lock_client_cache(lock_dst);
 
     lc->acquire(1);
     if (ec->put(1, "") != extent_protocol::OK)
@@ -372,16 +372,19 @@ yfs_client::write(inum ino, size_t size, off_t off, const char *data,
         r = IOERR;
         goto release;
     }
+    printf("yc::write get %016llx done\n", ino);
 
     size_origin = content.size();
     if ((uint32_t)off > size_origin){
-        content.append((size_t)off - size_origin, '\0');
+        printf("yc::write %016llx, off = %ld > size_origin = %lu\n", ino, off, size_origin);
+        content.append((size_t)off - size_origin + size, '\0');
         bytes_written = (size_t)off - size_origin + size;
     }
     else
         bytes_written = size;
-    
     content.replace(off, size, std::string(data, size));
+    printf("yc::write %016llx, replace done, write_after size = %lu\n", ino, content.size());
+
     if (ec->put(ino, content) != extent_protocol::OK) {
         r = IOERR;
         goto release;
@@ -389,6 +392,7 @@ yfs_client::write(inum ino, size_t size, off_t off, const char *data,
     
 release:
     lc->release(ino);
+    printf("r = %d\n", r);
     return r;
 }
 
