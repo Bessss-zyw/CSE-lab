@@ -1,0 +1,9 @@
+MODEL_NAME                    = "Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz"
+PHYSICAL_CHIPS                = 2
+CORE_PER_CHIP                 = 1
+SMT_LEVEL                     = 1
+CACHE_PER_CORE                = 4096
+seq_cores                     = [0,1]
+rr_cores                      = [0,1]
+test_hw_thr_cnts_fine_grain   = [1,2]
+test_hw_thr_cnts_coarse_grain = [1,2]
