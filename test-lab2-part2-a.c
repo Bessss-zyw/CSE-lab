@@ -238,6 +238,7 @@ createn(const char *d, const char *prefix, int nf, bool possible_dup)
 
   for(i = 0; i < nf; i++){
     sprintf(n, "%s/%s-%d", d, prefix, i);
+    // printf("\ncreate(%s)\n", n);
     fd = creat(n, 0666);
     if (fd < 0 && possible_dup && errno == EEXIST)
       continue;

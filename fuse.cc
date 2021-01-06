@@ -527,24 +527,25 @@ main(int argc, char *argv[])
 
     setvbuf(stdout, NULL, _IONBF, 0);
 
-#if 0
+#if 1
     if(argc != 4){
         fprintf(stderr, "Usage: yfs_client <mountpoint> <port-extent-server> <port-lock-server>\n");
         exit(1);
     }
-#endif
+#else
     if(argc != 2){
         fprintf(stderr, "Usage: yfs_client <mountpoint>\n");
         exit(1);
     }
+#endif
     mountpoint = argv[1];
 
     srandom(getpid());
 
     myid = random();
 
-    // yfs = new yfs_client(argv[2], argv[3]);
-    yfs = new yfs_client();
+    yfs = new yfs_client(argv[2], argv[3]);
+    //yfs = new yfs_client();
 
     fuseserver_oper.getattr    = fuseserver_getattr;
     fuseserver_oper.statfs     = fuseserver_statfs;
@@ -572,10 +573,6 @@ main(int argc, char *argv[])
 #ifdef __APPLE__
     fuse_argv[fuse_argc++] = "-o";
     fuse_argv[fuse_argc++] = "nolocalcaches"; // no dir entry caching
-    // fuse_argv[fuse_argc++] = "-o";
-    // fuse_argv[fuse_argc++] = "kernel_cache"; 
-    // fuse_argv[fuse_argc++] = "-o";
-    // fuse_argv[fuse_argc++] = "auto_cache";
     fuse_argv[fuse_argc++] = "-o";
     fuse_argv[fuse_argc++] = "daemon_timeout=86400";
 #endif

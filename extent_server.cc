@@ -9,42 +9,62 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include <arpa/inet.h>
+#include "lang/verify.h"
+#include "handle.h"
+
+#define DEBUG 0
+
 extent_server::extent_server() 
 {
   im = new inode_manager();
 }
 
-int extent_server::create(uint32_t type, extent_protocol::extentid_t &id)
+extent_server::~extent_server() 
 {
-  // alloc a new inode and return inum
-  id = im->alloc_inode(type);
-  // printf("\textent_server: create inode %lld\n", id);
+  for(std::map<extent_protocol::extentid_t, extent *>::iterator it = extents.begin(); it != extents.end(); it++)
+		delete it->second;
+}
+
+int extent_server::create(std::string id, uint32_t type, extent_protocol::extentid_t &eid)
+{
+  eid = im->alloc_inode(type);
+  if (DEBUG) printf("\textent_server: create inode %lld\n", eid);
+
+  // if id is not in cached set, add it 
+  addextent(eid, id);
 
   return extent_protocol::OK;
 }
 
-int extent_server::put(extent_protocol::extentid_t id, std::string buf, int &)
+int extent_server::put(std::string id, extent_protocol::extentid_t eid, std::string buf, int &)
 {
-  // printf("\textent_server: put %lld\n", id);
-  id &= 0x7fffffff;
+  if (DEBUG) printf("\textent_server: put %lld\n", eid);
+  eid &= 0x7fffffff;
   
   const char * cbuf = buf.c_str();
   int size = buf.size();
-  im->write_file(id, cbuf, size);
+  im->write_file(eid, cbuf, size);
+
+  // notify the cached clients except id
+  notify(eid, id);
+
+  // if id is not in cached set, add it 
+  addextent(eid, id);
   
   return extent_protocol::OK;
 }
 
-int extent_server::get(extent_protocol::extentid_t id, std::string &buf)
+int extent_server::get(std::string id, extent_protocol::extentid_t eid, std::string &buf)
 {
-  // printf("\textent_server: get %lld\n", id);
+  if (DEBUG) printf("\textent_server: get %lld\n", eid);
 
-  id &= 0x7fffffff;
+  eid &= 0x7fffffff;
 
   int size = 0;
   char *cbuf = NULL;
 
-  im->read_file(id, &cbuf, &size);
+  im->read_file(eid, &cbuf, &size);
   if (size == 0)
     buf = "";
   else {
@@ -52,30 +72,65 @@ int extent_server::get(extent_protocol::extentid_t id, std::string &buf)
     free(cbuf);
   }
 
+  // if id is not in cached set, add it 
+  addextent(eid, id);
+
   return extent_protocol::OK;
 }
 
-int extent_server::getattr(extent_protocol::extentid_t id, extent_protocol::attr &a)
+int extent_server::getattr(std::string id, extent_protocol::extentid_t eid, extent_protocol::attr &a)
 {
-  // printf("\textent_server: getattr %lld\n", id);
+  if (DEBUG) printf("\textent_server: getattr %lld\n", eid);
 
-  id &= 0x7fffffff;
+  eid &= 0x7fffffff;
   
   extent_protocol::attr attr;
   memset(&attr, 0, sizeof(attr));
-  im->getattr(id, attr);
+  im->getattr(eid, attr);
   a = attr;
+
+  // if id is not in cached set, add it 
+  addextent(eid, id);
 
   return extent_protocol::OK;
 }
 
-int extent_server::remove(extent_protocol::extentid_t id, int &)
+int extent_server::remove(std::string id, extent_protocol::extentid_t eid, int &)
 {
-  // printf("\textent_server: remove %lld\n", id);
+  if (DEBUG) printf("\textent_server: remove %lld\n", eid);
 
-  id &= 0x7fffffff;
-  im->remove_file(id);
+  eid &= 0x7fffffff;
+  im->remove_file(eid);
+
+  // notify the cached clients except id
+  notify(eid, id);
+  extent_t * info = extents[eid];
+  delete info;
+  extents[eid] = NULL;
  
   return extent_protocol::OK;
 }
 
+
+void extent_server::addextent(extent_protocol::extentid_t eid, std::string id) {
+  if (DEBUG) printf("\textent_server: addextent id %s to extent %lld\n", id.data(), eid);
+  // if (extents.find(eid) == extents.end()) {
+  if (extents[eid] == NULL) {
+    extents[eid] = new extent();
+  }
+  extent_t * info = extents[eid];
+  info->cached_cids.insert(id);
+  if (DEBUG) printf("\textent_server: addextent finished\n");
+}
+
+void extent_server::notify(extent_protocol::extentid_t eid, std::string except) {
+  if (DEBUG) printf("\textent_server: notify %lld except %s\n", eid, except.data());
+  
+  int r;
+  extent_t * info = extents[eid];
+  if (info == NULL) return;
+  for (std::set<std::string>::iterator it=info->cached_cids.begin(); it!=info->cached_cids.end(); ++it){
+    if (*it == except) continue;
+    handle(*it).safebind()->call(extent_protocol::pull, eid, r);
+  }
+}

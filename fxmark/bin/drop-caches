@@ -1,6 +1,0 @@
-#!/bin/sh
-
-set -e
-
-# Clears pagecache, dentries, and inodes
-echo 3 > /proc/sys/vm/drop_caches
