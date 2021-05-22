@@ -28,7 +28,7 @@ In the past, we will provide you a VM image running on VMware so you can directl
     %  make
 ```
 
-**Notes:** Only files in the volume will be persistent, put all the files useful to the volume directory, in the above example: /home/stu/devlop directory.
+**Notes:** Only files in the volume will be persistent, put all the files useful to the volume directory, in the above example: /home/stu/devlop directory. The password for the docker is 000, add the stu to the sudoer for convenience.
 
 If you have questions about this lab, please ask TA: Xu Tianqiang.
 
